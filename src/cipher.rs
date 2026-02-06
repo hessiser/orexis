@@ -27,6 +27,9 @@ pub struct RPG_Client_NetworkManager;
 impl RPG_Client_NetworkManager {
     #[il2cpp_method(name = "OHNHMNAEDPN", args = ["uint", "RPG.Client.RelicItemData[]"])]
     pub fn change_avatar_relics(&self, id: u32, relics: Il2CppArray) {}
+
+    #[il2cpp_method(name = "KBIAPKNIKGH", args = ["uint", "uint"])]
+    pub fn change_avatar_lightcone(&self, id: u32, lightcone: u32) {}
 }
 
 #[il2cpp_ref_type("RPG.Client.GlobalVars")]

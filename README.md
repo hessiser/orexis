@@ -1,6 +1,5 @@
 # Orexis
-
-Honkai: Star Rail loadout plugin.
+Honkai Star Rail (HSR) Character Build Loadout Plugin
 
 ## Building
 

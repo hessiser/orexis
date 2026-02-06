@@ -98,3 +98,16 @@ fn apply_loadouts(id: u32, relics: Vec<u32>) -> Result<()> {
     log::info!("Loadout applied successfully for avatar id {id}");
     Ok(())
 }
+
+fn apply_lightcone(id: u32, lightcone: u32) -> Result<()> {
+    log::info!("Applying lightcone for avatar id {id}");
+
+    let network_manager = RPG_Client_GlobalVars::s_NetworkManager()
+        .context("Failed to resolve NetworkManager")?;
+    network_manager
+        .change_avatar_lightcone(id, lightcone)
+        .with_context(|| format!("Failed to change avatar lightcone for id {id}"))?;
+
+    log::info!("Lightcone applied successfully for avatar id {id}");
+    Ok(())
+}
