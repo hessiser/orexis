@@ -1,4 +1,4 @@
-# Orexis
+# Orexis [![Orexis](https://img.shields.io/badge/Orexis-Discord-%235865F2.svg)](https://discord.gg/Y9kSnPk95H)
 Honkai Star Rail (HSR) Character Build Loadout Plugin
 
 ## Building

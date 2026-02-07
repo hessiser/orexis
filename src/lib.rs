@@ -57,6 +57,7 @@ pub fn main() {
 }
 
 fn run() -> Result<()> {
+    #[cfg(debug_assertions)]
     unsafe { windows::Win32::System::Console::AllocConsole().unwrap() };
     unsafe {
         while GetModuleHandleW(windows::core::w!("GameAssembly")).is_err()
