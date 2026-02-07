@@ -55,42 +55,52 @@ pub fn start_server() {
 
 fn on_connect(_socket: SocketRef) {
     log::info!("Client connected to orexis server");
+    apply_loadouts(1405, vec![4651, 5389, 5602, 18021, 27723, 31379]).unwrap_or_else(|e| {
+        log::error!("Failed to apply loadouts: {e:#}");
+    });
 }
 
 fn apply_loadouts(id: u32, relics: Vec<u32>) -> Result<()> {
     log::info!("Applying loadout for avatar id {id}");
 
     let type_name = RPG_Client_RelicItemData::ffi_name();
-    let runtime_type = System_RuntimeType::from_name(type_name)
-        .context("Expected valid type name")?;
+    let runtime_type = System_RuntimeType::from_name(type_name)?;
     let ty = runtime_type.get_il2cpp_type();
 
-    let module_manager = RPG_Client_GlobalVars::s_ModuleManager()
-        .context("Failed to resolve ModuleManager")?;
+    let module_manager = RPG_Client_GlobalVars::s_ModuleManager()?;
     let inventory_module = module_manager
-        .InventoryModule()
-        .context("Failed to resolve InventoryModule")?;
+        .InventoryModule()?;
 
-    let type_handle = System_Type::get_type_from_handle(ty)
-        .context("Failed to resolve System.Type handle")?;
-    let mut array = Il2CppArray::create_instance(
-        type_handle,
-        relics.len() as i32,
-    )
-    .context("Failed to create Il2CppArray")?;
+    let type_handle = System_Type::get_type_from_handle(ty)?;
 
-    for (i, uid) in relics.iter().enumerate() {
+    let mut filtered = Vec::with_capacity(relics.len());
+    for uid in relics {
         let relic_data = inventory_module
-            .get_relic_data_by_uid(*uid)
+            .get_relic_data_by_uid(uid)
             .with_context(|| format!("Failed to get relic data by uid {uid}"))?;
         if relic_data.0.is_null() {
             return Err(anyhow!("Relic data was null for uid {uid}"));
         }
+
+        if relic_data.get_BelongAvatarID()? == id {
+            continue;
+        }
+
+        filtered.push(relic_data);
+    }
+
+    let mut array = Il2CppArray::create_instance(
+        type_handle,
+        filtered.len() as i32,
+    )
+    .context("Failed to create Il2CppArray")?;
+
+    for (i, relic_data) in filtered.into_iter().enumerate() {
         *(array.get_mut(i)) = relic_data;
     }
 
-    let network_manager = RPG_Client_GlobalVars::s_NetworkManager()
-        .context("Failed to resolve NetworkManager")?;
+    let network_manager = RPG_Client_GlobalVars::s_NetworkManager()?;
+
     network_manager
         .change_avatar_relics(id, array)
         .with_context(|| format!("Failed to change avatar relics for id {id}"))?;
@@ -98,6 +108,7 @@ fn apply_loadouts(id: u32, relics: Vec<u32>) -> Result<()> {
     log::info!("Loadout applied successfully for avatar id {id}");
     Ok(())
 }
+
 
 fn apply_lightcone(id: u32, lightcone: u32) -> Result<()> {
     log::info!("Applying lightcone for avatar id {id}");

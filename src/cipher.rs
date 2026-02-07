@@ -5,6 +5,11 @@ use il2cpp_runtime::prelude::*;
 #[il2cpp_ref_type("RPG.Client.RelicItemData")]
 pub struct RPG_Client_RelicItemData;
 
+impl RPG_Client_RelicItemData {
+    #[il2cpp_getter_property(property = "BelongAvatarID")]
+    pub fn get_BelongAvatarID(&self) -> u32 {}
+}
+
 #[il2cpp_ref_type("RPG.Client.InventoryModule")]
 pub struct RPG_Client_InventoryModule;
 

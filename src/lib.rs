@@ -52,6 +52,7 @@ pub fn main() {
                 }
             }
         }
+        server::start_server();
     });
 }
 
@@ -67,7 +68,6 @@ fn run() -> Result<()> {
     logging::MultiLogger::init().context("Failed to initialize logging")?;
 
     init_runtime().context("Failed to initialize il2cpp runtime")?;
-    server::start_server();
     Ok(())
 }
 
