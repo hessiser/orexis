@@ -1,30 +1,39 @@
-mod logging;
 mod cipher;
+mod logging;
 mod server;
+mod updater;
 
 use std::{
-    ffi::c_void, io::Cursor, os::windows::process::CommandExt,
-    process::Command, thread, time::Duration,
+    ffi::c_void, io::Cursor, os::windows::process::CommandExt, process::Command, sync::LazyLock, thread, time::Duration
 };
 
 use anyhow::{Context, Result, anyhow};
 use ctor::ctor;
 use il2cpp_runtime::api::ApiIndexTable;
+use tokio::runtime::Runtime;
 use win32_notif::{
-    NotificationBuilder, ToastsNotifier,
-    notification::visual::{Text, text::HintStyle},
+    NotificationActivatedEventHandler, NotificationBuilder, ToastsNotifier,
+    notification::{
+        actions::{ActionButton, action::ActivationType},
+        visual::{Text, text::HintStyle},
+    },
 };
 use windows::{
-    Win32::{
-        System::{
-            Diagnostics::Debug::ReadProcessMemory,
-            LibraryLoader::GetModuleHandleW,
-            ProcessStatus::{GetModuleInformation, MODULEINFO},
-            Threading::{GetCurrentProcess, CREATE_NO_WINDOW},
-        },
+    Win32::System::{
+        Diagnostics::Debug::ReadProcessMemory,
+        LibraryLoader::GetModuleHandleW,
+        ProcessStatus::{GetModuleInformation, MODULEINFO},
+        Threading::{CREATE_NO_WINDOW, GetCurrentProcess},
     },
     core::{PCWSTR, w},
 };
+
+pub static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
+    Runtime::new().unwrap_or_else(|e| {
+        log::error!("{e}");
+        panic!("{e}");
+    })
+});
 
 #[ctor]
 pub fn main() {
@@ -58,7 +67,30 @@ pub fn main() {
 
 fn run() -> Result<()> {
     #[cfg(debug_assertions)]
-    unsafe { windows::Win32::System::Console::AllocConsole().unwrap() };
+    unsafe {
+        windows::Win32::System::Console::AllocConsole().unwrap()
+    };
+    // Check for updates asynchronously
+    RUNTIME.spawn(async {
+        let updater = updater::Updater::new(env!("CARGO_PKG_VERSION"));
+        match updater.check_update().await {
+            Ok(Some(new_version)) => {
+                log::info!("Update available: {}", new_version);
+                if let Ok(aumid) = resolve_aumid() {
+                    if let Err(err) = show_update_notification(&aumid, &new_version) {
+                        log::error!("Failed to show update notification: {err:#}");
+                    }
+                }
+            }
+            Ok(None) => {
+                log::debug!("No update available");
+            }
+            Err(err) => {
+                log::error!("Failed to check for updates: {err:#}");
+            }
+        }
+    });
+
     unsafe {
         while GetModuleHandleW(windows::core::w!("GameAssembly")).is_err()
             || GetModuleHandleW(windows::core::w!("UnityPlayer")).is_err()
@@ -127,6 +159,47 @@ fn show_notification(aumid: &str, message: &str) -> Result<()> {
         .context("Failed to build toast notification")?;
 
     notif.show().context("Failed to show toast notification")?;
+    Ok(())
+}
+
+fn show_update_notification(aumid: &str, new_version: &str) -> Result<()> {
+    let notifier = ToastsNotifier::new(aumid).context("Failed to create Windows toast notifier")?;
+    let message = format!("New version {} available", new_version);
+
+    let notif = NotificationBuilder::new()
+        .visual(
+            Text::create(0, "Update Available")
+                .with_align_center(true)
+                .with_wrap(true)
+                .with_style(HintStyle::Title),
+        )
+        .visual(
+            Text::create_binded(1, "desc")
+                .with_align_center(true)
+                .with_wrap(true)
+                .with_style(HintStyle::Body),
+        )
+        .value("desc", &message)
+        .action(ActionButton::create("Download").with_activation_type(ActivationType::Foreground).with_id("download_btn"))
+        .on_activated(NotificationActivatedEventHandler::new(|_, args: Option<win32_notif::handler::ToastActivatedArgs>| {
+            if let Some(id) = args.and_then(|a| a.button_id) {
+                if id == "download_btn" {
+                    log::info!("User clicked Download button");
+                    RUNTIME.spawn(async {
+                        let updater = updater::Updater::new(env!("CARGO_PKG_VERSION"));
+                        match updater.download_update().await {
+                            Ok(()) => log::info!("Update downloaded successfully"),
+                            Err(e) => log::error!("Failed to download update: {e:#}"),
+                        }
+                    });
+                }
+            }
+            Ok(())
+        }))
+        .build(0, &notifier, "01", "update")
+        .context("Failed to build update notification")?;
+
+    notif.show().context("Failed to show update notification")?;
     Ok(())
 }
 
@@ -201,5 +274,6 @@ fn init_runtime() -> Result<()> {
         il2cpp_image_get_class: 170,
     };
     il2cpp_runtime::init(get_il2cpp_table_offset()?, table)?;
+
     Ok(())
 }

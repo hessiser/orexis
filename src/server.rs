@@ -1,6 +1,5 @@
 use il2cpp_runtime::Il2CppObject;
 use il2cpp_runtime::types::{Il2CppArray, System_RuntimeType, System_Type};
-use tokio::runtime::Runtime;
 use tokio::net::TcpListener;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use futures_util::{StreamExt, SinkExt};
@@ -8,6 +7,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::{OnceLock, RwLock};
 
+use crate::RUNTIME;
 use crate::cipher::{RPG_Client_GlobalVars, RPG_Client_RelicItemData};
 
 const WS_SERVER_ADDR: &str = "127.0.0.1:945";
@@ -45,11 +45,7 @@ enum OutgoingMessage {
 }
 
 pub fn start_server() {
-    let runtime = Runtime::new().unwrap_or_else(|e| {
-        log::error!("{e}");
-        panic!("{e}");
-    });
-    runtime.block_on(async {
+    RUNTIME.block_on(async {
         tokio::spawn(async {
             if let Err(e) = start_ws_server().await {
                 log::error!("WebSocket server error: {e}");
