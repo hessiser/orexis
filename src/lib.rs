@@ -2,6 +2,7 @@ mod cipher;
 mod logging;
 mod server;
 mod updater;
+mod hooks;
 
 use std::{
     ffi::c_void, io::Cursor, os::windows::process::CommandExt, process::Command, sync::LazyLock, thread, time::Duration
@@ -27,6 +28,8 @@ use windows::{
     },
     core::{PCWSTR, w},
 };
+
+use crate::hooks::install_hooks;
 
 pub static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
     Runtime::new().unwrap_or_else(|e| {
@@ -274,6 +277,6 @@ fn init_runtime() -> Result<()> {
         il2cpp_image_get_class: 170,
     };
     il2cpp_runtime::init(get_il2cpp_table_offset()?, table)?;
-
+    (unsafe { install_hooks().context("Failed to install hooks") })?;
     Ok(())
 }
