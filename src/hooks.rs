@@ -130,8 +130,8 @@ fn sync(this: RPG_Client_RelicItemData, packet: *const c_void) {
             let mut value = fixpoint_to_raw(&RPG_GameCore_GamePlayStatic::CalcRelicSubAffixValue(
                 *relic_sub_affix_config.BaseValue()?,
                 *relic_sub_affix_config.StepValue()?,
-                step as u32,
                 count as u32,
+                step as u32,
             )?);
             let mut key = property_name;
             if value < 1.0 {
