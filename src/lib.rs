@@ -1,3 +1,4 @@
+#![feature(int_roundings)]
 mod cipher;
 mod logging;
 mod server;

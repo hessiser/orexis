@@ -88,6 +88,9 @@ impl RPG_Client_RelicItemData {
     #[il2cpp_method(name = "_GetPropertyTypeBySubAffixID", args = ["uint"])]
     pub fn _GetPropertyTypeBySubAffixID(&self, sub_affix_id: u32) -> RPG_GameCore_AvatarPropertyType {}
 
+    #[il2cpp_method(name = "GetMainAffixPropertyValue", args = [])]
+    pub fn GetMainAffixPropertyValue(&self) -> RPG_GameCore_FixPoint {}
+
 }
 
 #[il2cpp_enum_type(i32)]
