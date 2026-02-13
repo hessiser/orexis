@@ -12,10 +12,10 @@ pub struct RPG_GameCore_FixPoint {
 pub struct HANGJNJOFEC;
 impl HANGJNJOFEC {
     #[il2cpp_field(name = "JLDLGGOAFPP")]
-    pub fn count(&self) -> System_Int32__Boxed {}
+    pub fn step(&self) -> System_Int32__Boxed {}
 
     #[il2cpp_field(name = "IIONFBIAHLP")]
-    pub fn step(&self) -> System_Int32__Boxed {}
+    pub fn count(&self) -> System_Int32__Boxed {}
 
     #[il2cpp_field(name = "LCEHFEFOPDM")]
     pub fn property_id(&self) -> System_Int32__Boxed {}
