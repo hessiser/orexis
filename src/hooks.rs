@@ -48,6 +48,8 @@ pub struct RelicSubstat {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Relic {
     pub part: String,
+    #[serde(skip)]
+    pub set_id: String,
     #[serde(rename = "set")]
     pub set: String,
     pub enhance: u32,
@@ -91,10 +93,7 @@ impl From<&Relic> for ReliquaryRelic {
             .substats
             .iter()
             .map(|substat| {
-                let mut key = substat.stat.replace('%', "_");
-                if substat.stat.contains('%') {
-                    key.push('_');
-                }
+                let key = substat.stat.replace('%', "_");
 
                 let count = substat.rolls.low + substat.rolls.mid + substat.rolls.high;
                 let step = substat.rolls.mid + 2 * substat.rolls.high;
@@ -109,7 +108,7 @@ impl From<&Relic> for ReliquaryRelic {
             .collect();
 
         ReliquaryRelic {
-            set_id: relic.set.clone(),
+            set_id: relic.set_id.clone(),
             name: relic.set.clone(),
             slot: relic.part.clone(),
             rarity: relic.grade,
@@ -209,14 +208,14 @@ fn sync(this: RPG_Client_RelicItemData, packet: *const c_void) {
     unsafe { sync_Hook.call(this, packet) };
     let func = || -> Result<()> {
         let relic_row = this.get_RelicRow()?;
-        let set_id = relic_row.SetID()?;
+        let set_id = (*relic_row.SetID()?).0;
         let location = this.get_BelongAvatarID()?;
         let lock = this.get_IsProtected()?;
         let discard = this.get_IsDiscard()?;
         let uid = this.as_base().get_UID()?;
         let rarity = (*relic_row.Rarity()?) as u32;
         let level = this.get_Level()?;
-        let relic_set_config_data = RPG_GameCore_RelicSetConfigExcelTable::GetData((*set_id).0)?;
+        let relic_set_config_data = RPG_GameCore_RelicSetConfigExcelTable::GetData(set_id)?;
         let relic_set_name = RPG_Client_TextmapStatic::get_text(
             &*relic_set_config_data.SetName()?,
             std::ptr::null(),
@@ -288,6 +287,7 @@ fn sync(this: RPG_Client_RelicItemData, packet: *const c_void) {
 
         let relic = Relic {
             part: slot_name.to_string(),
+            set_id: set_id.to_string(),
             set: relic_set_name.to_string(),
             enhance: level as u32,
             grade: rarity,
