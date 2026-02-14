@@ -12,8 +12,7 @@ ctor = "0.6.3"
 indoc = "2.0.7"
 widestring = "1.2.1"
 win32_notif = "0.10.5"
-# il2cpp-runtime = { git = "https://github.com/hessiser/il2cpp-rust.git", rev = "510aab9" , features = ["log"]}
-il2cpp-runtime = { path = "../il2cpp-rust/il2cpp-runtime", features = ["log"] }
+il2cpp-runtime = { git = "https://github.com/hessiser/il2cpp-rust.git", rev = "33cb9b7" , features = ["log"]}
 patternscan = "1.2.0"
 log = "0.4"
 slog = { version = "2.7.0", features = ["max_level_trace", "release_max_level_trace"] }
