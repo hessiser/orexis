@@ -32,7 +32,6 @@ static LIVE_IMPORT_SENDER: OnceLock<broadcast::Sender<LiveImportEvent>> = OnceLo
 enum IncomingMessage {
     SetLoadout { SetLoadout: CharacterLoadout },
     SetLoadouts { SetLoadouts: Vec<CharacterLoadout> },
-    SyncRelics {  },
     Tagged {
         #[serde(rename = "type")]
         msg_type: String,
@@ -46,8 +45,6 @@ enum IncomingMessage {
 enum OutgoingMessage {
     #[serde(rename = "loadouts_updated")]
     LoadoutsUpdated { count: usize },
-    #[serde(rename = "sync_relics")]
-    RelicsSync { relics: Vec<Relic> },
     #[serde(rename = "error")]
     Error { message: String },
 }
@@ -143,7 +140,6 @@ async fn handle_connection(stream: tokio::net::TcpStream) -> Result<()> {
                         Ok(IncomingMessage::SetLoadouts { SetLoadouts: loadouts }) => {
                             handle_apply_loadouts(loadouts)
                         }
-                        Ok(IncomingMessage::SyncRelics { .. }) => handle_sync_relics(),
                         Ok(IncomingMessage::Tagged { msg_type, loadouts, loadout }) => {
                             match msg_type.as_str() {
                                 "set_loadouts" => {
@@ -156,7 +152,6 @@ async fn handle_connection(stream: tokio::net::TcpStream) -> Result<()> {
                                         OutgoingMessage::Error { message: "Missing loadout".to_string() }
                                     }
                                 }
-                                "sync_relics" => handle_sync_relics(),
                                 _ => OutgoingMessage::Error { message: format!("Unsupported message type: {msg_type}") },
                             }
                         }
@@ -325,11 +320,6 @@ fn apply_lightcone(id: u32, lightcone: u32) -> Result<()> {
 
     log::info!("Lightcone applied successfully for avatar id {id}");
     Ok(())
-}
-
-fn handle_sync_relics() -> OutgoingMessage {
-    let relics = get_relics_snapshot();
-    OutgoingMessage::RelicsSync { relics }
 }
 
 pub fn send_live_relic_update(relics: Vec<ReliquaryRelic>) {
