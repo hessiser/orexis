@@ -202,14 +202,23 @@ impl Into<f64> for RPG_GameCore_FixPoint {
     }
 }
 
+static ARE_RELICS_INITIALIZED: OnceLock<bool> = OnceLock::new();
+
 pub fn update_relics_detour(this: RPG_Client_InventoryModule, list: List, flag: bool) {
     unsafe { _UpdateRelics_Hook.call(this, list, flag) };
-    write_relics_to_json("dump.json")
+    write_relics_to_json("relics.json")
         .unwrap_or_else(|e| log::error!("Failed to write relics to JSON: {e:#}"));
+    ARE_RELICS_INITIALIZED.get_or_init(|| true);
 }
 
 fn sync(this: RPG_Client_RelicItemData, packet: *const c_void) {
     unsafe { sync_Hook.call(this, packet) };
+    let Some(initialized) = ARE_RELICS_INITIALIZED.get() else {
+        return;
+    };
+    if !*initialized {
+        return;
+    }
     let func = || -> Result<()> {
         let relic_row = this.get_RelicRow()?;
         let set_id = (*relic_row.SetID()?).0;
