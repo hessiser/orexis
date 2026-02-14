@@ -113,7 +113,11 @@ impl From<&Relic> for ReliquaryRelic {
             slot: relic.part.clone(),
             rarity: relic.grade,
             level: relic.enhance,
-            mainstat: relic.main.stat.clone().replace('%', "_"),
+            mainstat: if let Some(base) = relic.main.stat.strip_suffix('%') {
+                base.to_string()
+            } else {
+                relic.main.stat.clone()
+            },
             substats,
             location: relic.equipped_by.clone(),
             lock: relic.lock,
@@ -279,9 +283,8 @@ fn sync(this: RPG_Client_RelicItemData, packet: *const c_void) {
         };
 
         let mut main_value: f64 = (this.GetMainAffixPropertyValue()?).into();
-        let mut main_stat = main_stat_name.to_string();
+        let main_stat = main_stat_name.to_string();
         if main_value < 1.0 {
-            main_stat.push('%');
             main_value *= 100.0;
         }
 
@@ -309,7 +312,9 @@ fn sync(this: RPG_Client_RelicItemData, packet: *const c_void) {
             discard,
         };
 
+        let live_relic = ReliquaryRelic::from(&relic);
         get_relics().write().insert(uid.to_string(), relic);
+        crate::server::send_live_relic_update(vec![live_relic]);
         log::info!("Stored relic UID: {}", uid);
 
         Ok(())
@@ -336,6 +341,11 @@ pub fn write_relics_to_json(path: &str) -> Result<()> {
 
     log::info!("Wrote {} relics to {}", relics.len(), path);
     Ok(())
+}
+
+pub fn get_relics_snapshot() -> Vec<Relic> {
+    let relics_map = get_relics().read();
+    relics_map.values().cloned().collect()
 }
 
 pub unsafe fn install_hooks() -> Result<()> {

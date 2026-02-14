@@ -1,14 +1,18 @@
 use il2cpp_runtime::Il2CppObject;
 use il2cpp_runtime::types::{Il2CppArray, System_RuntimeType, System_Type};
 use tokio::net::TcpListener;
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::RecvError;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
 use futures_util::{StreamExt, SinkExt};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::sync::{OnceLock, RwLock};
 
 use crate::RUNTIME;
 use crate::cipher::{RPG_Client_GlobalVars, RPG_Client_RelicItemData};
+use crate::hooks::{get_relics_snapshot, Relic, ReliquaryRelic};
 
 const WS_SERVER_ADDR: &str = "127.0.0.1:945";
 
@@ -20,6 +24,7 @@ pub struct CharacterLoadout {
 }
 
 static LOADOUTS: OnceLock<RwLock<Vec<CharacterLoadout>>> = OnceLock::new();
+static LIVE_IMPORT_SENDER: OnceLock<broadcast::Sender<LiveImportEvent>> = OnceLock::new();
 
 #[derive(Deserialize)]
 #[serde(untagged)]
@@ -27,6 +32,7 @@ static LOADOUTS: OnceLock<RwLock<Vec<CharacterLoadout>>> = OnceLock::new();
 enum IncomingMessage {
     SetLoadout { SetLoadout: CharacterLoadout },
     SetLoadouts { SetLoadouts: Vec<CharacterLoadout> },
+    SyncRelics {  },
     Tagged {
         #[serde(rename = "type")]
         msg_type: String,
@@ -40,8 +46,42 @@ enum IncomingMessage {
 enum OutgoingMessage {
     #[serde(rename = "loadouts_updated")]
     LoadoutsUpdated { count: usize },
+    #[serde(rename = "sync_relics")]
+    RelicsSync { relics: Vec<Relic> },
     #[serde(rename = "error")]
     Error { message: String },
+}
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(tag = "event", content = "data")]
+enum LiveImportEvent {
+    InitialScan(LiveExport),
+    UpdateRelics(Vec<ReliquaryRelic>),
+}
+
+#[derive(Serialize, Clone, Debug)]
+struct LiveExport {
+    source: &'static str,
+    build: &'static str,
+    version: u32,
+    metadata: LiveMetadata,
+    gacha: LiveGachaFunds,
+    materials: Vec<Value>,
+    light_cones: Vec<Value>,
+    relics: Vec<ReliquaryRelic>,
+    characters: Vec<Value>,
+}
+
+#[derive(Serialize, Clone, Debug)]
+struct LiveMetadata {
+    uid: Option<u32>,
+    trailblazer: Option<&'static str>,
+}
+
+#[derive(Serialize, Clone, Debug, Default)]
+struct LiveGachaFunds {
+    stellar_jade: u32,
+    oneric_shards: u32,
 }
 
 pub fn start_server() {
@@ -78,41 +118,69 @@ async fn start_ws_server() -> Result<()> {
 async fn handle_connection(stream: tokio::net::TcpStream) -> Result<()> {
     let ws_stream = accept_async(stream).await?;
     let (mut write, mut read) = ws_stream.split();
+    let mut live_rx = get_live_import_sender().subscribe();
 
-    while let Some(msg) = read.next().await {
-        let msg = msg?;
+    let initial_scan = build_initial_scan_event();
+    let initial_json = serde_json::to_string(&initial_scan)?;
+    write.send(Message::Text(initial_json)).await?;
 
-        if msg.is_text() || msg.is_binary() {
-            let text = msg.to_text()?;
-            log::debug!("Received: {text}");
+    loop {
+        tokio::select! {
+            msg = read.next() => {
+                let Some(msg) = msg else {
+                    break;
+                };
+                let msg = msg?;
 
-            let response = match serde_json::from_str::<IncomingMessage>(text) {
-                Ok(IncomingMessage::SetLoadout { SetLoadout: loadout }) => {
-                    handle_apply_loadout(loadout)
-                }
-                Ok(IncomingMessage::SetLoadouts { SetLoadouts: loadouts }) => {
-                    handle_apply_loadouts(loadouts)
-                }
-                Ok(IncomingMessage::Tagged { msg_type, loadouts, loadout }) => {
-                    match msg_type.as_str() {
-                        "set_loadouts" => {
-                            handle_apply_loadouts(loadouts.unwrap_or_default())
+                if msg.is_text() || msg.is_binary() {
+                    let text = msg.to_text()?;
+                    log::debug!("Received: {text}");
+
+                    let response = match serde_json::from_str::<IncomingMessage>(text) {
+                        Ok(IncomingMessage::SetLoadout { SetLoadout: loadout }) => {
+                            handle_apply_loadout(loadout)
                         }
-                        "set_loadout" => {
-                            if let Some(item) = loadout {
-                                handle_apply_loadout(item)
-                            } else {
-                                OutgoingMessage::Error { message: "Missing loadout".to_string() }
+                        Ok(IncomingMessage::SetLoadouts { SetLoadouts: loadouts }) => {
+                            handle_apply_loadouts(loadouts)
+                        }
+                        Ok(IncomingMessage::SyncRelics { .. }) => handle_sync_relics(),
+                        Ok(IncomingMessage::Tagged { msg_type, loadouts, loadout }) => {
+                            match msg_type.as_str() {
+                                "set_loadouts" => {
+                                    handle_apply_loadouts(loadouts.unwrap_or_default())
+                                }
+                                "set_loadout" => {
+                                    if let Some(item) = loadout {
+                                        handle_apply_loadout(item)
+                                    } else {
+                                        OutgoingMessage::Error { message: "Missing loadout".to_string() }
+                                    }
+                                }
+                                "sync_relics" => handle_sync_relics(),
+                                _ => OutgoingMessage::Error { message: format!("Unsupported message type: {msg_type}") },
                             }
                         }
-                        _ => OutgoingMessage::Error { message: format!("Unsupported message type: {msg_type}") },
+                        Err(e) => OutgoingMessage::Error { message: format!("Invalid message: {e}") },
+                    };
+
+                    let response_json = serde_json::to_string(&response)?;
+                    write.send(Message::Text(response_json)).await?;
+                }
+            }
+            event = live_rx.recv() => {
+                match event {
+                    Ok(event) => {
+                        let json = serde_json::to_string(&event)?;
+                        write.send(Message::Text(json)).await?;
+                    }
+                    Err(RecvError::Lagged(_)) => {
+                        continue;
+                    }
+                    Err(RecvError::Closed) => {
+                        break;
                     }
                 }
-                Err(e) => OutgoingMessage::Error { message: format!("Invalid message: {e}") },
-            };
-
-            let response_json = serde_json::to_string(&response)?;
-            write.send(Message::Text(response_json)).await?;
+            }
         }
     }
 
@@ -257,4 +325,46 @@ fn apply_lightcone(id: u32, lightcone: u32) -> Result<()> {
 
     log::info!("Lightcone applied successfully for avatar id {id}");
     Ok(())
+}
+
+fn handle_sync_relics() -> OutgoingMessage {
+    let relics = get_relics_snapshot();
+    OutgoingMessage::RelicsSync { relics }
+}
+
+pub fn send_live_relic_update(relics: Vec<ReliquaryRelic>) {
+    if relics.is_empty() {
+        return;
+    }
+
+    let _ = get_live_import_sender().send(LiveImportEvent::UpdateRelics(relics));
+}
+
+fn get_live_import_sender() -> &'static broadcast::Sender<LiveImportEvent> {
+    LIVE_IMPORT_SENDER.get_or_init(|| {
+        let (sender, _) = broadcast::channel(128);
+        sender
+    })
+}
+
+fn build_initial_scan_event() -> LiveImportEvent {
+    let relics = get_relics_snapshot()
+        .into_iter()
+        .map(|relic| ReliquaryRelic::from(&relic))
+        .collect();
+
+    LiveImportEvent::InitialScan(LiveExport {
+        source: "orexis",
+        build: env!("CARGO_PKG_VERSION"),
+        version: 4,
+        metadata: LiveMetadata {
+            uid: None,
+            trailblazer: None,
+        },
+        gacha: LiveGachaFunds::default(),
+        materials: Vec::new(),
+        light_cones: Vec::new(),
+        relics,
+        characters: Vec::new(),
+    })
 }
