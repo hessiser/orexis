@@ -1,6 +1,8 @@
 #![feature(int_roundings)]
 mod cipher;
 mod logging;
+mod models;
+mod relic_utils;
 mod server;
 mod updater;
 mod hooks;

@@ -1,10 +1,6 @@
 use anyhow::Result;
 use il2cpp_runtime::{Il2CppObject, types::List};
-use parking_lot::RwLock;
 use retour::static_detour;
-use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
-use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::OnceLock;
 
@@ -14,160 +10,8 @@ use crate::cipher::{
     RPG_GameCore_RelicBaseTypeExcelTable, RPG_GameCore_RelicSetConfigExcelTable,
     RPG_GameCore_RelicSubAffixConfigExcelTable,
 };
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Substat {
-    pub key: String,
-    pub value: f64,
-    pub count: i32,
-    pub step: i32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RelicMainStat {
-    pub stat: String,
-    pub value: f64,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RelicRolls {
-    pub high: i32,
-    pub mid: i32,
-    pub low: i32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct RelicSubstat {
-    pub stat: String,
-    pub value: f64,
-    pub rolls: RelicRolls,
-    #[serde(rename = "addedRolls")]
-    pub added_rolls: i32,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Relic {
-    pub part: String,
-    #[serde(skip)]
-    pub set_id: String,
-    #[serde(rename = "set")]
-    pub set: String,
-    pub enhance: u32,
-    pub grade: u32,
-    pub main: RelicMainStat,
-    pub substats: Vec<RelicSubstat>,
-    #[serde(rename = "equippedBy")]
-    pub equipped_by: String,
-    pub verified: bool,
-    pub id: String,
-    #[serde(rename = "ageIndex")]
-    pub age_index: u32,
-    #[serde(rename = "initialRolls")]
-    pub initial_rolls: u32,
-    #[serde(skip)]
-    pub lock: bool,
-    #[serde(skip)]
-    pub discard: bool,
-}
-
-#[serde_as]
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub struct ReliquaryRelic {
-    pub set_id: String,
-    pub name: String,
-    pub slot: String,
-    pub rarity: u32,
-    pub level: u32,
-    pub mainstat: String,
-    pub substats: Vec<Substat>,
-    pub location: String,
-    pub lock: bool,
-    pub discard: bool,
-    pub _uid: String,
-}
-
-impl From<&Relic> for ReliquaryRelic {
-    fn from(relic: &Relic) -> Self {
-        let substats = relic
-            .substats
-            .iter()
-            .map(|substat| {
-                let key = substat.stat.replace('%', "_");
-
-                let count = substat.rolls.low + substat.rolls.mid + substat.rolls.high;
-                let step = substat.rolls.mid + 2 * substat.rolls.high;
-
-                Substat {
-                    key,
-                    value: substat.value,
-                    count,
-                    step,
-                }
-            })
-            .collect();
-
-        ReliquaryRelic {
-            set_id: relic.set_id.clone(),
-            name: relic.set.clone(),
-            slot: relic.part.clone(),
-            rarity: relic.grade,
-            level: relic.enhance,
-            mainstat: if let Some(base) = relic.main.stat.strip_suffix('%') {
-                base.to_string()
-            } else {
-                relic.main.stat.clone()
-            },
-            substats,
-            location: relic.equipped_by.clone(),
-            lock: relic.lock,
-            discard: relic.discard,
-            _uid: relic.id.clone(),
-        }
-    }
-}
-
-fn get_relics() -> &'static RwLock<HashMap<String, Relic>> {
-    static RELICS: OnceLock<RwLock<HashMap<String, Relic>>> = OnceLock::new();
-    RELICS.get_or_init(|| RwLock::new(HashMap::new()))
-}
-
-fn calc_initial_rolls(level: u32, total_rolls: u32) -> u32 {
-    total_rolls - level.div_floor(3)
-}
-
-fn solve_low_mid_high(step: i32, count: i32) -> Vec<(i32, i32, i32)> {
-    if step < 0 || count < 0 {
-        return Vec::new();
-    }
-
-    // 0*low + 1*mid + 2*high = step
-    // low + mid + high = count
-    // mid = step - 2*high
-    // low = count - step + high
-    let high_min = (step - count).max(0);
-    let high_max = step / 2;
-
-    if high_min > high_max {
-        return Vec::new();
-    }
-
-    (high_min..=high_max)
-        .map(|high| {
-            let mid = step - 2 * high;
-            let low = count - step + high;
-            (low, mid, high)
-        })
-        .filter(|(low, mid, high)| *low >= 0 && *mid >= 0 && *high >= 0)
-        .collect()
-}
-
-fn pick_low_mid_high(step: i32, count: i32) -> (i32, i32, i32) {
-    solve_low_mid_high(step, count)
-        .last()
-        .copied()
-        .unwrap_or((0, 0, 0))
-}
+use crate::models::{Relic, RelicMainStat, RelicRolls, RelicSubstat, ReliquaryRelic};
+use crate::relic_utils::{calc_initial_rolls, get_relics, pick_low_mid_high, write_relics_to_json};
 
 macro_rules! hook_fn {
     (
@@ -332,29 +176,6 @@ fn sync(this: RPG_Client_RelicItemData, packet: *const c_void) {
         Ok(()) => {}
         Err(e) => log::error!("Failed to sync relic data: {e:#}"),
     }
-}
-
-pub fn write_relics_to_json(path: &str) -> Result<()> {
-    let relics_map = get_relics().read();
-    let relics: Vec<ReliquaryRelic> = relics_map
-        .values()
-        .map(|relic| ReliquaryRelic::from(relic))
-        .collect();
-
-    let json_obj = serde_json::json!({
-        "relics": relics
-    });
-
-    let json_str = serde_json::to_string_pretty(&json_obj)?;
-    std::fs::write(path, json_str)?;
-
-    log::info!("Wrote {} relics to {}", relics.len(), path);
-    Ok(())
-}
-
-pub fn get_relics_snapshot() -> Vec<Relic> {
-    let relics_map = get_relics().read();
-    relics_map.values().cloned().collect()
 }
 
 pub unsafe fn install_hooks() -> Result<()> {

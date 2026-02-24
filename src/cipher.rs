@@ -245,6 +245,7 @@ impl RPG_Client_ModuleManager {
 pub struct RPG_Client_NetworkManager;
 
 impl RPG_Client_NetworkManager {
+    // SendDressAvatar
     #[il2cpp_method(name = "MJNBHOKDEJI", args = ["uint", "RPG.Client.RelicItemData[]"])]
     pub fn change_avatar_relics(&self, id: u32, relics: Il2CppArray) {}
 

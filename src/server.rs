@@ -12,7 +12,8 @@ use std::sync::{OnceLock, RwLock};
 
 use crate::RUNTIME;
 use crate::cipher::{RPG_Client_GlobalVars, RPG_Client_RelicItemData};
-use crate::hooks::{get_relics_snapshot, Relic, ReliquaryRelic};
+use crate::models::ReliquaryRelic;
+use crate::relic_utils::get_relics_snapshot;
 
 const WS_SERVER_ADDR: &str = "127.0.0.1:945";
 
