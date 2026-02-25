@@ -1,17 +1,14 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use il2cpp_runtime::{Il2CppObject, types::List};
 use retour::static_detour;
 use std::ffi::c_void;
 use std::sync::OnceLock;
 
 use crate::cipher::{
-    HANGJNJOFEC, RPG_Client_InventoryModule, RPG_Client_RelicItemData, RPG_Client_TextmapStatic,
-    RPG_GameCore_AvatarPropertyExcelTable, RPG_GameCore_FixPoint, RPG_GameCore_GamePlayStatic,
-    RPG_GameCore_RelicBaseTypeExcelTable, RPG_GameCore_RelicSetConfigExcelTable,
-    RPG_GameCore_RelicSubAffixConfigExcelTable,
+    HANGJNJOFEC, RPG_Client_EquipmentItemData, RPG_Client_InventoryModule, RPG_Client_RelicItemData, RPG_Client_TextmapStatic, RPG_GameCore_AvatarPropertyExcelTable, RPG_GameCore_FixPoint, RPG_GameCore_GamePlayStatic, RPG_GameCore_RelicBaseTypeExcelTable, RPG_GameCore_RelicSetConfigExcelTable, RPG_GameCore_RelicSubAffixConfigExcelTable
 };
-use crate::models::{Relic, RelicMainStat, RelicRolls, RelicSubstat, ReliquaryRelic};
-use crate::relic_utils::{calc_initial_rolls, get_relics, pick_low_mid_high, write_relics_to_json};
+use crate::models::{LightCone, Relic, RelicMainStat, RelicRolls, RelicSubstat, ReliquaryLightCone, ReliquaryRelic};
+use crate::relic_utils::{calc_initial_rolls, get_light_cones, get_relics, pick_low_mid_high, write_light_cones_to_json, write_relics_to_json};
 
 macro_rules! hook_fn {
     (
@@ -25,14 +22,25 @@ macro_rules! hook_fn {
 }
 
 static_detour! {
-    static _UpdateRelics_Hook: unsafe extern "C" fn(
+    static _UpdateRelics_Detour: unsafe extern "C" fn(
         RPG_Client_InventoryModule,
         List,
         bool
     );
-    static sync_Hook: unsafe extern "C" fn(
+    static sync_relic_Detour: unsafe extern "C" fn(
         RPG_Client_RelicItemData,
         *const c_void
+    );
+
+    static sync_equipment_Detour: unsafe extern "C" fn(
+        RPG_Client_EquipmentItemData,
+        *const c_void
+    );
+
+    static _UpdateEquipments_Detour: unsafe extern "C" fn(
+        RPG_Client_InventoryModule,
+        List,
+        bool
     );
 }
 
@@ -47,16 +55,77 @@ impl Into<f64> for RPG_GameCore_FixPoint {
 }
 
 static ARE_RELICS_INITIALIZED: OnceLock<bool> = OnceLock::new();
+static ARE_LIGHT_CONES_INITIALIZED: OnceLock<bool> = OnceLock::new();
 
-pub fn update_relics_detour(this: RPG_Client_InventoryModule, list: List, flag: bool) {
-    unsafe { _UpdateRelics_Hook.call(this, list, flag) };
+fn update_relics(this: RPG_Client_InventoryModule, list: List, flag: bool) {
+    unsafe { _UpdateRelics_Detour.call(this, list, flag) };
     write_relics_to_json("relics.json")
         .unwrap_or_else(|e| log::error!("Failed to write relics to JSON: {e:#}"));
     ARE_RELICS_INITIALIZED.get_or_init(|| true);
 }
 
-fn sync(this: RPG_Client_RelicItemData, packet: *const c_void) {
-    unsafe { sync_Hook.call(this, packet) };
+fn update_equipments(this: RPG_Client_InventoryModule, list: List, flag: bool) {
+    unsafe { _UpdateEquipments_Detour.call(this, list, flag) };
+    write_light_cones_to_json("light_cones.json")
+        .unwrap_or_else(|e| log::error!("Failed to write light cones to JSON: {e:#}"));
+    ARE_LIGHT_CONES_INITIALIZED.get_or_init(|| true);
+}
+
+fn sync_equipment(this: RPG_Client_EquipmentItemData, packet: *const c_void) {
+    unsafe { sync_equipment_Detour.call(this, packet) };
+    let Some(initialized) = ARE_LIGHT_CONES_INITIALIZED.get() else {
+        return;
+    };
+    if !*initialized {
+        return;
+    }
+
+    let func = || -> Result<()> {
+        let uid = this.as_base().get_UID()?;
+        let location = this.get_BelongAvatarID()?;
+        let lock = this.get_IsProtected()?;
+        let rank = (*this._Rank()?).0;
+        let level = this.get_Level()?;
+        let promotion = this.get_Promotion()?;
+
+        let equipment_row = this.get_EquipmentRow()?;
+
+        let name = RPG_Client_TextmapStatic::get_text(
+            &*equipment_row.EquipmentName()?,
+            std::ptr::null(),
+        )?;
+        let id = (*equipment_row.EquipmentID()?).0;
+
+        let light_cone = LightCone {
+            id: id.to_string(),
+            name: name.to_string(),
+            level: level as u32,
+            promotion: promotion as u32,
+            rank: rank as u32,
+            equipped_by: if location > 0 {
+                location.to_string()
+            } else {
+                String::new()
+            },
+            lock,
+            uid: uid.to_string(),
+        };
+
+        let live_light_cone = ReliquaryLightCone::from(&light_cone);
+        get_light_cones().write().insert(uid.to_string(), light_cone);
+        crate::server::send_live_light_cone_update(vec![live_light_cone]);
+        log::info!("Stored lightcone UID: {}", uid);
+
+        Ok(())
+    };
+    match func() {
+        Ok(()) => {},
+        Err(e) => log::error!("Failed to sync lightcone data: {e:#}"),
+    }
+}
+
+fn sync_relic(this: RPG_Client_RelicItemData, packet: *const c_void) {
+    unsafe { sync_relic_Detour.call(this, packet) };
     let Some(initialized) = ARE_RELICS_INITIALIZED.get() else {
         return;
     };
@@ -181,23 +250,46 @@ fn sync(this: RPG_Client_RelicItemData, packet: *const c_void) {
 pub unsafe fn install_hooks() -> Result<()> {
     unsafe {
         hook_fn!(
-            sync_Hook,
+            sync_relic_Detour,
             RPG_Client_RelicItemData::get_class_static()?
-                .find_method("Sync", vec!["NNDLOJHOGAG"])?
+                .methods().iter().find(|method| {
+                    method.name() == "Sync" && method.args_cnt() == 1
+                }).context("Could not find Sync method")?
                 .va(),
-            sync
+            sync_relic
         );
 
         hook_fn!(
-            _UpdateRelics_Hook,
+            _UpdateRelics_Detour,
             RPG_Client_InventoryModule::get_class_static()?
-                .find_method(
-                    "_UpdateRelics",
-                    vec!["System.Collections.Generic.IList<NNDLOJHOGAG>", "bool"]
-                )?
+                .methods().iter().find(|method| {
+                    method.name() == "_UpdateRelics" && method.args_cnt() == 2
+                }).context("Could not find _UpdateRelics method")?
                 .va(),
-            update_relics_detour
+            update_relics
         );
+
+        hook_fn!(
+            sync_equipment_Detour,
+            RPG_Client_EquipmentItemData::get_class_static()?
+                .methods().iter().find(|method| {
+                    method.name() == "Sync" && method.args_cnt() == 1
+                }).context("Could not find Sync method")?
+                .va(),
+            sync_equipment
+        );
+
+
+        hook_fn!(
+            _UpdateEquipments_Detour,
+            RPG_Client_InventoryModule::get_class_static()?
+                .methods().iter().find(|method| {
+                    method.name() == "_UpdateEquipments" && method.args_cnt() == 2
+                }).context("Could not find _UpdateEquipments method")?
+                .va(),
+            update_equipments
+        );
+
     }
     Ok(())
 }

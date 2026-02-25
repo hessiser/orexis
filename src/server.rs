@@ -12,8 +12,8 @@ use std::sync::{OnceLock, RwLock};
 
 use crate::RUNTIME;
 use crate::cipher::{RPG_Client_GlobalVars, RPG_Client_RelicItemData};
-use crate::models::ReliquaryRelic;
-use crate::relic_utils::get_relics_snapshot;
+use crate::models::{ReliquaryLightCone, ReliquaryRelic};
+use crate::relic_utils::{get_light_cones_snapshot, get_relics_snapshot};
 
 const WS_SERVER_ADDR: &str = "127.0.0.1:945";
 
@@ -55,6 +55,7 @@ enum OutgoingMessage {
 enum LiveImportEvent {
     InitialScan(LiveExport),
     UpdateRelics(Vec<ReliquaryRelic>),
+    UpdateLightCones(Vec<ReliquaryLightCone>),
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -65,7 +66,7 @@ struct LiveExport {
     metadata: LiveMetadata,
     gacha: LiveGachaFunds,
     materials: Vec<Value>,
-    light_cones: Vec<Value>,
+    light_cones: Vec<ReliquaryLightCone>,
     relics: Vec<ReliquaryRelic>,
     characters: Vec<Value>,
 }
@@ -185,7 +186,7 @@ async fn handle_connection(stream: tokio::net::TcpStream) -> Result<()> {
 
 fn handle_apply_loadout(loadout: CharacterLoadout) -> OutgoingMessage {
     set_loadouts(vec![loadout.clone()]);
-    match apply_loadout(loadout.avatar_id, loadout.relic_uids) {
+    match apply_loadout(loadout.avatar_id, &loadout.relic_uids) {
         Ok(equipped_count) => OutgoingMessage::LoadoutsUpdated { count: equipped_count },
         Err(e) => {
             log::error!("Failed to apply loadout: {e}");
@@ -199,7 +200,7 @@ fn handle_apply_loadouts(loadouts: Vec<CharacterLoadout>) -> OutgoingMessage {
     let mut total = 0;
     let mut errors = Vec::new();
     for loadout in loadouts {
-        match apply_loadout(loadout.avatar_id, loadout.relic_uids) {
+        match apply_loadout(loadout.avatar_id, &loadout.relic_uids) {
             Ok(count) => total += count,
             Err(e) => {
                 log::error!("Failed to apply loadout '{}': {e}", loadout.name);
@@ -227,7 +228,7 @@ fn set_loadouts(loadouts: Vec<CharacterLoadout>) {
     }
 }
 
-fn apply_loadout(avatar_id: u32, relic_uids: Vec<u32>) -> Result<usize> {
+fn apply_loadout(avatar_id: u32, relic_uids: &Vec<u32>) -> Result<usize> {
     log::info!("[Orexis] Applying loadout for avatar {avatar_id} with {} relic UIDs", relic_uids.len());
     for (i, uid) in relic_uids.iter().enumerate() {
         log::info!("requested [{i}] uid={uid}");
@@ -242,7 +243,7 @@ fn apply_loadout(avatar_id: u32, relic_uids: Vec<u32>) -> Result<usize> {
         .InventoryModule()?;
 
     let mut relics_to_equip: Vec<RPG_Client_RelicItemData> = Vec::new();
-    for uid in &relic_uids {
+    for uid in relic_uids {
         let relic_data = inventory_module
             .get_relic_data_by_uid(*uid)
             .with_context(|| format!("Failed to get relic data for uid {uid}"))?;
@@ -331,6 +332,14 @@ pub fn send_live_relic_update(relics: Vec<ReliquaryRelic>) {
     let _ = get_live_import_sender().send(LiveImportEvent::UpdateRelics(relics));
 }
 
+pub fn send_live_light_cone_update(light_cones: Vec<ReliquaryLightCone>) {
+    if light_cones.is_empty() {
+        return;
+    }
+
+    let _ = get_live_import_sender().send(LiveImportEvent::UpdateLightCones(light_cones));
+}
+
 fn get_live_import_sender() -> &'static broadcast::Sender<LiveImportEvent> {
     LIVE_IMPORT_SENDER.get_or_init(|| {
         let (sender, _) = broadcast::channel(128);
@@ -344,6 +353,11 @@ fn build_initial_scan_event() -> LiveImportEvent {
         .map(|relic| ReliquaryRelic::from(&relic))
         .collect();
 
+    let light_cones = get_light_cones_snapshot()
+        .into_iter()
+        .map(|lc| ReliquaryLightCone::from(&lc))
+        .collect();
+
     LiveImportEvent::InitialScan(LiveExport {
         source: "orexis",
         build: env!("CARGO_PKG_VERSION"),
@@ -354,7 +368,7 @@ fn build_initial_scan_event() -> LiveImportEvent {
         },
         gacha: LiveGachaFunds::default(),
         materials: Vec::new(),
-        light_cones: Vec::new(),
+        light_cones,
         relics,
         characters: Vec::new(),
     })

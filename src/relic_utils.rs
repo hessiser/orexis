@@ -3,11 +3,16 @@ use parking_lot::RwLock;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::models::{Relic, ReliquaryRelic};
+use crate::models::{LightCone, Relic, ReliquaryLightCone, ReliquaryRelic};
 
 pub fn get_relics() -> &'static RwLock<HashMap<String, Relic>> {
     static RELICS: OnceLock<RwLock<HashMap<String, Relic>>> = OnceLock::new();
     RELICS.get_or_init(|| RwLock::new(HashMap::new()))
+}
+
+pub fn get_light_cones() -> &'static RwLock<HashMap<String, LightCone>> {
+    static LIGHT_CONES: OnceLock<RwLock<HashMap<String, LightCone>>> = OnceLock::new();
+    LIGHT_CONES.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
 pub fn calc_initial_rolls(level: u32, total_rolls: u32) -> u32 {
@@ -68,4 +73,28 @@ pub fn write_relics_to_json(path: &str) -> Result<()> {
 pub fn get_relics_snapshot() -> Vec<Relic> {
     let relics_map = get_relics().read();
     relics_map.values().cloned().collect()
+}
+
+pub fn write_light_cones_to_json(path: &str) -> Result<()> {
+    let light_cones_map = get_light_cones().read();
+    let light_cones: Vec<ReliquaryLightCone> = light_cones_map
+        .values()
+        .map(|lc| ReliquaryLightCone::from(lc))
+        .collect();
+
+    let json_obj = serde_json::json!({
+        "light_cones": light_cones
+    });
+
+    let json_str = serde_json::to_string_pretty(&json_obj)?;
+    std::fs::write(path, json_str)?;
+
+    log::info!("Wrote {} light cones to {}", light_cones.len(), path);
+    Ok(())
+}
+
+#[allow(dead_code)]
+pub fn get_light_cones_snapshot() -> Vec<LightCone> {
+    let light_cones_map = get_light_cones().read();
+    light_cones_map.values().cloned().collect()
 }

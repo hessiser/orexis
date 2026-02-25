@@ -93,6 +93,45 @@ impl RPG_Client_RelicItemData {
 
 }
 
+
+#[il2cpp_ref_type("RPG.Client.EquipmentItemData", base(RPG_Client_ItemData))]
+pub struct RPG_Client_EquipmentItemData;
+impl RPG_Client_EquipmentItemData {
+    #[il2cpp_getter_property(property = "BelongAvatarID")]
+    pub fn get_BelongAvatarID(&self) -> u32 {}
+
+    #[il2cpp_getter_property(property = "IsDiscard")]
+    pub fn get_IsDiscard(&self) -> bool {}
+
+    #[il2cpp_getter_property(property = "IsProtected")]
+    pub fn get_IsProtected(&self) -> bool {}
+
+    #[il2cpp_getter_property(property = "Level")]
+    pub fn get_Level(&self) -> u32 {}
+
+    #[il2cpp_field(name = "_Rank")]
+    pub fn _Rank(&self) -> System_UInt32__Boxed {}
+
+    #[il2cpp_getter_property(property = "Version")]
+    pub fn get_Version(&self) -> u32 {}
+
+    #[il2cpp_getter_property(property = "Promotion")]
+    pub fn get_Promotion(&self) -> u32 {}
+
+    #[il2cpp_getter_property(property = "EquipmentRow")]
+    pub fn get_EquipmentRow(&self) -> RPG_GameCore_EquipmentRow {}
+}
+
+#[il2cpp_ref_type("RPG.GameCore.EquipmentRow")]
+pub struct RPG_GameCore_EquipmentRow;
+impl RPG_GameCore_EquipmentRow {
+    #[il2cpp_field(name = "EquipmentID")]
+    pub fn EquipmentID(&self) -> System_UInt32__Boxed {}
+
+    #[il2cpp_field(name = "EquipmentName")]
+    pub fn EquipmentName(&self) -> RPG_Client_TextID__Boxed {}
+}
+
 #[il2cpp_enum_type(i32)]
 pub enum RPG_GameCore_CombatPowerRelicRarityType {
     CombatPowerRelicRarity1,

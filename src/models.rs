@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use serde_with::serde_as;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Substat {
@@ -56,7 +55,6 @@ pub struct Relic {
     pub discard: bool,
 }
 
-#[serde_as]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct ReliquaryRelic {
@@ -71,6 +69,46 @@ pub struct ReliquaryRelic {
     pub lock: bool,
     pub discard: bool,
     pub _uid: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct LightCone {
+    pub id: String,
+    pub name: String,
+    pub level: u32,
+    pub promotion: u32,
+    pub rank: u32,
+    pub equipped_by: String,
+    pub lock: bool,
+    pub uid: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct ReliquaryLightCone {
+    pub id: String,
+    pub name: String,
+    pub level: u32,
+    pub ascension: u32,
+    pub superimposition: u32,
+    pub location: String,
+    pub lock: bool,
+    pub _uid: String,
+}
+
+impl From<&LightCone> for ReliquaryLightCone {
+    fn from(lc: &LightCone) -> Self {
+        ReliquaryLightCone {
+            id: lc.id.clone(),
+            name: lc.name.clone(),
+            level: lc.level,
+            ascension: lc.promotion,
+            superimposition: lc.rank,
+            location: lc.equipped_by.clone(),
+            lock: lc.lock,
+            _uid: lc.uid.clone(),
+        }
+    }
 }
 
 impl From<&Relic> for ReliquaryRelic {
