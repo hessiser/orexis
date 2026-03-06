@@ -8,6 +8,7 @@ use futures_util::{StreamExt, SinkExt};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
 use std::sync::{OnceLock, RwLock};
 
 use crate::RUNTIME;
@@ -16,6 +17,8 @@ use crate::models::{ReliquaryLightCone, ReliquaryRelic};
 use crate::relic_utils::{get_light_cones_snapshot, get_relics_snapshot};
 
 const WS_SERVER_ADDR: &str = "127.0.0.1:945";
+const LIVE_IMPORT_SOURCE: &str = "reliquary_archiver";
+const LIVE_IMPORT_BUILD: &str = "v0.8.0";
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct CharacterLoadout {
@@ -348,19 +351,21 @@ fn get_live_import_sender() -> &'static broadcast::Sender<LiveImportEvent> {
 }
 
 fn build_initial_scan_event() -> LiveImportEvent {
-    let relics = get_relics_snapshot()
+    let relics: Vec<ReliquaryRelic> = get_relics_snapshot()
         .into_iter()
         .map(|relic| ReliquaryRelic::from(&relic))
         .collect();
 
-    let light_cones = get_light_cones_snapshot()
+    let light_cones: Vec<ReliquaryLightCone> = get_light_cones_snapshot()
         .into_iter()
         .map(|lc| ReliquaryLightCone::from(&lc))
         .collect();
 
+    let characters = build_characters_from_equipment(&relics, &light_cones);
+
     LiveImportEvent::InitialScan(LiveExport {
-        source: "orexis",
-        build: env!("CARGO_PKG_VERSION"),
+        source: LIVE_IMPORT_SOURCE,
+        build: LIVE_IMPORT_BUILD,
         version: 4,
         metadata: LiveMetadata {
             uid: None,
@@ -370,6 +375,45 @@ fn build_initial_scan_event() -> LiveImportEvent {
         materials: Vec::new(),
         light_cones,
         relics,
-        characters: Vec::new(),
+        characters,
     })
+}
+
+fn build_characters_from_equipment(
+    relics: &[ReliquaryRelic],
+    light_cones: &[ReliquaryLightCone],
+) -> Vec<Value> {
+    let mut ids = BTreeSet::<String>::new();
+
+    for relic in relics {
+        if !relic.location.is_empty() {
+            ids.insert(relic.location.clone());
+        }
+    }
+
+    for light_cone in light_cones {
+        if !light_cone.location.is_empty() {
+            ids.insert(light_cone.location.clone());
+        }
+    }
+
+    if let Some(loadouts) = LOADOUTS.get() {
+        for loadout in loadouts.read().unwrap().iter() {
+            ids.insert(loadout.avatar_id.to_string());
+        }
+    }
+
+    ids.into_iter()
+        .map(|id| {
+            serde_json::json!({
+                "id": id,
+                "name": "Unknown",
+                "path": "Unknown",
+                "level": 80,
+                "ascension": 6,
+                "eidolon": 0,
+                "ability_version": 0
+            })
+        })
+        .collect()
 }

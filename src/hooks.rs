@@ -66,6 +66,13 @@ fn update_relics(this: RPG_Client_InventoryModule, list: List, flag: bool) {
 
 fn update_equipments(this: RPG_Client_InventoryModule, list: List, flag: bool) {
     unsafe { _UpdateEquipments_Detour.call(this, list, flag) };
+
+    for equipment in list.to_vec::<RPG_Client_EquipmentItemData>() {
+        if let Err(e) = process_equipment_data(equipment) {
+            log::error!("{e:#}");
+        }
+    }
+
     write_light_cones_to_json("light_cones.json")
         .unwrap_or_else(|e| log::error!("Failed to write light cones to JSON: {e:#}"));
     ARE_LIGHT_CONES_INITIALIZED.get_or_init(|| true);
@@ -73,65 +80,55 @@ fn update_equipments(this: RPG_Client_InventoryModule, list: List, flag: bool) {
 
 fn sync_equipment(this: RPG_Client_EquipmentItemData, packet: *const c_void) {
     unsafe { sync_equipment_Detour.call(this, packet) };
-    let Some(initialized) = ARE_LIGHT_CONES_INITIALIZED.get() else {
-        return;
-    };
-    if !*initialized {
-        return;
-    }
 
-    let func = || -> Result<()> {
-        let uid = this.as_base().get_UID()?;
-        let location = this.get_BelongAvatarID()?;
-        let lock = this.get_IsProtected()?;
-        let rank = (*this._Rank()?).0;
-        let level = this.get_Level()?;
-        let promotion = this.get_Promotion()?;
-
-        let equipment_row = this.get_EquipmentRow()?;
-
-        let name = RPG_Client_TextmapStatic::get_text(
-            &*equipment_row.EquipmentName()?,
-            std::ptr::null(),
-        )?;
-        let id = (*equipment_row.EquipmentID()?).0;
-
-        let light_cone = LightCone {
-            id: id.to_string(),
-            name: name.to_string(),
-            level: level as u32,
-            promotion: promotion as u32,
-            rank: rank as u32,
-            equipped_by: if location > 0 {
-                location.to_string()
-            } else {
-                String::new()
-            },
-            lock,
-            uid: uid.to_string(),
-        };
-
-        let live_light_cone = ReliquaryLightCone::from(&light_cone);
-        get_light_cones().write().insert(uid.to_string(), light_cone);
-        crate::server::send_live_light_cone_update(vec![live_light_cone]);
-        log::info!("Stored lightcone UID: {}", uid);
-
-        Ok(())
-    };
-    match func() {
-        Ok(()) => {},
+    match process_equipment_data(this) {
+        Ok(()) => {}
         Err(e) => log::error!("Failed to sync lightcone data: {e:#}"),
     }
 }
 
+fn process_equipment_data(this: RPG_Client_EquipmentItemData) -> Result<()> {
+    let uid = this.as_base().get_UID()?;
+    let location = this.get_BelongAvatarID()?;
+    let lock = this.get_IsProtected()?;
+    let rank = (*this._Rank()?).0;
+    let level = this.get_Level()?;
+    let promotion = this.get_Promotion()?;
+
+    let equipment_row = this.get_EquipmentRow()?;
+
+    let name = RPG_Client_TextmapStatic::get_text(
+        &*equipment_row.EquipmentName()?,
+        std::ptr::null(),
+    )?;
+    let id = (*equipment_row.EquipmentID()?).0;
+
+    let light_cone = LightCone {
+        id: id.to_string(),
+        name: name.to_string(),
+        level: level as u32,
+        promotion: promotion as u32,
+        rank: rank as u32,
+        equipped_by: if location > 0 {
+            location.to_string()
+        } else {
+            String::new()
+        },
+        lock,
+        uid: uid.to_string(),
+    };
+
+    let live_light_cone = ReliquaryLightCone::from(&light_cone);
+    get_light_cones().write().insert(uid.to_string(), light_cone);
+    crate::server::send_live_light_cone_update(vec![live_light_cone]);
+    log::info!("Stored lightcone UID: {}", uid);
+
+    Ok(())
+}
+
 fn sync_relic(this: RPG_Client_RelicItemData, packet: *const c_void) {
     unsafe { sync_relic_Detour.call(this, packet) };
-    let Some(initialized) = ARE_RELICS_INITIALIZED.get() else {
-        return;
-    };
-    if !*initialized {
-        return;
-    }
+
     let func = || -> Result<()> {
         let relic_row = this.get_RelicRow()?;
         let set_id = (*relic_row.SetID()?).0;
