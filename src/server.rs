@@ -13,6 +13,8 @@ use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
+use serde::{Deserializer};
+use std::collections::BTreeSet;
 
 use crate::RUNTIME;
 use crate::cipher::{
@@ -22,11 +24,15 @@ use crate::models::{ReliquaryLightCone, ReliquaryRelic};
 use crate::relic_utils::{get_light_cones_snapshot, get_relics_snapshot};
 
 const WS_SERVER_ADDR: &str = "127.0.0.1:945";
+const LIVE_IMPORT_SOURCE: &str = "reliquary_archiver";
+const LIVE_IMPORT_BUILD: &str = "v0.8.0";
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct CharacterLoadout {
+    #[serde(deserialize_with = "deserialize_u32_from_any")]
     pub avatar_id: u32,
     pub name: String,
+    #[serde(default, deserialize_with = "deserialize_relic_uids")]
     pub relic_uids: Vec<u32>,
 }
 
@@ -55,7 +61,73 @@ enum IncomingMessage {
         msg_type: String,
         loadouts: Option<Vec<CharacterLoadout>>,
         loadout: Option<CharacterLoadout>,
+        data: Option<Value>,
     },
+}
+
+fn parse_u32_from_value(value: &Value) -> Option<u32> {
+    match value {
+        Value::Number(num) => num.as_u64().and_then(|v| u32::try_from(v).ok()),
+        Value::String(raw) => raw.trim().parse::<u32>().ok(),
+        _ => None,
+    }
+}
+
+fn deserialize_u32_from_any<'de, D>(deserializer: D) -> Result<u32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Value::deserialize(deserializer)?;
+    parse_u32_from_value(&value).ok_or_else(|| {
+        serde::de::Error::custom("expected a positive integer (number or numeric string)")
+    })
+}
+
+fn deserialize_relic_uids<'de, D>(deserializer: D) -> Result<Vec<u32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let values = Vec::<Value>::deserialize(deserializer)?;
+    Ok(values
+        .into_iter()
+        .filter_map(|value| parse_u32_from_value(&value))
+        .collect())
+}
+
+fn parse_loadout_value(value: &Value) -> Option<CharacterLoadout> {
+    serde_json::from_value::<CharacterLoadout>(value.clone()).ok()
+}
+
+fn parse_loadouts_value(value: &Value) -> Option<Vec<CharacterLoadout>> {
+    serde_json::from_value::<Vec<CharacterLoadout>>(value.clone()).ok()
+}
+
+fn resolve_single_loadout(loadout: Option<CharacterLoadout>, data: Option<&Value>) -> Option<CharacterLoadout> {
+    if loadout.is_some() {
+        return loadout;
+    }
+
+    let Some(data) = data else {
+        return None;
+    };
+
+    parse_loadout_value(data)
+        .or_else(|| data.get("loadout").and_then(parse_loadout_value))
+        .or_else(|| data.get("SetLoadout").and_then(parse_loadout_value))
+}
+
+fn resolve_many_loadouts(loadouts: Option<Vec<CharacterLoadout>>, data: Option<&Value>) -> Option<Vec<CharacterLoadout>> {
+    if loadouts.is_some() {
+        return loadouts;
+    }
+
+    let Some(data) = data else {
+        return None;
+    };
+
+    parse_loadouts_value(data)
+        .or_else(|| data.get("loadouts").and_then(parse_loadouts_value))
+        .or_else(|| data.get("SetLoadouts").and_then(parse_loadouts_value))
 }
 
 #[derive(Serialize)]
@@ -159,13 +231,17 @@ async fn handle_connection(stream: tokio::net::TcpStream) -> Result<()> {
                         Ok(IncomingMessage::SetLoadouts { SetLoadouts: loadouts }) => {
                             handle_apply_loadouts(loadouts)
                         }
-                        Ok(IncomingMessage::Tagged { msg_type, loadouts, loadout }) => {
+                        Ok(IncomingMessage::Tagged { msg_type, loadouts, loadout, data }) => {
                             match msg_type.as_str() {
                                 "set_loadouts" => {
-                                    handle_apply_loadouts(loadouts.unwrap_or_default())
+                                    if let Some(items) = resolve_many_loadouts(loadouts, data.as_ref()) {
+                                        handle_apply_loadouts(items)
+                                    } else {
+                                        OutgoingMessage::Error { message: "Missing loadouts".to_string() }
+                                    }
                                 }
                                 "set_loadout" => {
-                                    if let Some(item) = loadout {
+                                    if let Some(item) = resolve_single_loadout(loadout, data.as_ref()) {
                                         handle_apply_loadout(item)
                                     } else {
                                         OutgoingMessage::Error { message: "Missing loadout".to_string() }
@@ -645,19 +721,21 @@ fn get_live_import_sender() -> &'static broadcast::Sender<LiveImportEvent> {
 }
 
 fn build_initial_scan_event() -> LiveImportEvent {
-    let relics = get_relics_snapshot()
+    let relics: Vec<ReliquaryRelic> = get_relics_snapshot()
         .into_iter()
         .map(|relic| ReliquaryRelic::from(&relic))
         .collect();
 
-    let light_cones = get_light_cones_snapshot()
+    let light_cones: Vec<ReliquaryLightCone> = get_light_cones_snapshot()
         .into_iter()
         .map(|lc| ReliquaryLightCone::from(&lc))
         .collect();
 
+    let characters = build_characters_from_equipment(&relics, &light_cones);
+
     LiveImportEvent::InitialScan(LiveExport {
-        source: "orexis",
-        build: env!("CARGO_PKG_VERSION"),
+        source: LIVE_IMPORT_SOURCE,
+        build: LIVE_IMPORT_BUILD,
         version: 4,
         metadata: LiveMetadata {
             uid: None,
@@ -667,6 +745,45 @@ fn build_initial_scan_event() -> LiveImportEvent {
         materials: Vec::new(),
         light_cones,
         relics,
-        characters: Vec::new(),
+        characters,
     })
+}
+
+fn build_characters_from_equipment(
+    relics: &[ReliquaryRelic],
+    light_cones: &[ReliquaryLightCone],
+) -> Vec<Value> {
+    let mut ids = BTreeSet::<String>::new();
+
+    for relic in relics {
+        if !relic.location.is_empty() {
+            ids.insert(relic.location.clone());
+        }
+    }
+
+    for light_cone in light_cones {
+        if !light_cone.location.is_empty() {
+            ids.insert(light_cone.location.clone());
+        }
+    }
+
+    if let Some(loadouts) = LOADOUTS.get() {
+        for loadout in loadouts.read().unwrap().iter() {
+            ids.insert(loadout.avatar_id.to_string());
+        }
+    }
+
+    ids.into_iter()
+        .map(|id| {
+            serde_json::json!({
+                "id": id,
+                "name": "Unknown",
+                "path": "Unknown",
+                "level": 80,
+                "ascension": 6,
+                "eidolon": 0,
+                "ability_version": 0
+            })
+        })
+        .collect()
 }
