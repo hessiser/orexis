@@ -8,16 +8,16 @@ pub struct RPG_GameCore_FixPoint {
     pub m_rawValue: i64,
 }
 
-#[il2cpp_ref_type("HANGJNJOFEC")]
-pub struct HANGJNJOFEC;
-impl HANGJNJOFEC {
-    #[il2cpp_field(name = "JLDLGGOAFPP")]
+#[il2cpp_ref_type("DMFFNIJGNND")]
+pub struct RelicSubAffix;
+impl RelicSubAffix {
+    #[il2cpp_field(name = "NOLNPNBKPOE")]
     pub fn count(&self) -> System_Int32__Boxed {}
 
-    #[il2cpp_field(name = "IIONFBIAHLP")]
+    #[il2cpp_field(name = "BHFHNGEIPJG")]
     pub fn step(&self) -> System_Int32__Boxed {}
 
-    #[il2cpp_field(name = "LCEHFEFOPDM")]
+    #[il2cpp_field(name = "GOKGLGMNIGL")]
     pub fn property_id(&self) -> System_Int32__Boxed {}
 }
 
@@ -285,11 +285,11 @@ pub struct RPG_Client_NetworkManager;
 
 impl RPG_Client_NetworkManager {
     // SendDressAvatar
-    #[il2cpp_method(name = "MJNBHOKDEJI", args = ["uint", "RPG.Client.RelicItemData[]"])]
+    #[il2cpp_method(name = "*", args = ["uint", "RPG.Client.RelicItemData[]"])]
     pub fn change_avatar_relics(&self, id: u32, relics: Il2CppArray) {}
 
-    #[il2cpp_method(name = "PHJLIBAGMAE", args = ["uint", "uint"])]
-    pub fn change_avatar_lightcone(&self, id: u32, lightcone: u32) {}
+    // #[il2cpp_method(name = "PHJLIBAGMAE", args = ["uint", "uint"])]
+    // pub fn change_avatar_lightcone(&self, id: u32, lightcone: u32) {}
 }
 
 #[il2cpp_ref_type("RPG.Client.GlobalVars")]

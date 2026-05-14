@@ -310,19 +310,19 @@ fn apply_loadout(avatar_id: u32, relic_uids: &Vec<u32>) -> Result<usize> {
     Ok(equipped_count)
 }
 
-#[allow(dead_code)]
-fn apply_lightcone(id: u32, lightcone: u32) -> Result<()> {
-    log::info!("Applying lightcone for avatar id {id}");
+// #[allow(dead_code)]
+// fn apply_lightcone(id: u32, lightcone: u32) -> Result<()> {
+//     log::info!("Applying lightcone for avatar id {id}");
 
-    let network_manager = RPG_Client_GlobalVars::s_NetworkManager()
-        .context("Failed to resolve NetworkManager")?;
-    network_manager
-        .change_avatar_lightcone(id, lightcone)
-        .with_context(|| format!("Failed to change avatar lightcone for id {id}"))?;
+//     let network_manager = RPG_Client_GlobalVars::s_NetworkManager()
+//         .context("Failed to resolve NetworkManager")?;
+//     network_manager
+//         .change_avatar_lightcone(id, lightcone)
+//         .with_context(|| format!("Failed to change avatar lightcone for id {id}"))?;
 
-    log::info!("Lightcone applied successfully for avatar id {id}");
-    Ok(())
-}
+//     log::info!("Lightcone applied successfully for avatar id {id}");
+//     Ok(())
+// }
 
 pub fn send_live_relic_update(relics: Vec<ReliquaryRelic>) {
     if relics.is_empty() {

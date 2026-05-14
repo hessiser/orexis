@@ -5,7 +5,7 @@ use std::ffi::c_void;
 use std::sync::OnceLock;
 
 use crate::cipher::{
-    HANGJNJOFEC, RPG_Client_EquipmentItemData, RPG_Client_InventoryModule, RPG_Client_RelicItemData, RPG_Client_TextmapStatic, RPG_GameCore_AvatarPropertyExcelTable, RPG_GameCore_FixPoint, RPG_GameCore_GamePlayStatic, RPG_GameCore_RelicBaseTypeExcelTable, RPG_GameCore_RelicSetConfigExcelTable, RPG_GameCore_RelicSubAffixConfigExcelTable
+    RelicSubAffix, RPG_Client_EquipmentItemData, RPG_Client_InventoryModule, RPG_Client_RelicItemData, RPG_Client_TextmapStatic, RPG_GameCore_AvatarPropertyExcelTable, RPG_GameCore_FixPoint, RPG_GameCore_GamePlayStatic, RPG_GameCore_RelicBaseTypeExcelTable, RPG_GameCore_RelicSetConfigExcelTable, RPG_GameCore_RelicSubAffixConfigExcelTable
 };
 use crate::models::{LightCone, Relic, RelicMainStat, RelicRolls, RelicSubstat, ReliquaryLightCone, ReliquaryRelic};
 use crate::relic_utils::{calc_initial_rolls, get_light_cones, get_relics, pick_low_mid_high, write_light_cones_to_json, write_relics_to_json};
@@ -158,7 +158,7 @@ fn sync_relic(this: RPG_Client_RelicItemData, packet: *const c_void) {
 
         let mut substats = Vec::new();
         let mut total_count: i32 = 0;
-        for substat in this.get_SubAffixList()?.to_vec::<HANGJNJOFEC>() {
+        for substat in this.get_SubAffixList()?.to_vec::<RelicSubAffix>() {
             let sub_property =
                 this._GetPropertyTypeBySubAffixID((*substat.property_id()?).0 as u32)?;
             let sub_row_data = RPG_GameCore_AvatarPropertyExcelTable::GetData(sub_property)?;
