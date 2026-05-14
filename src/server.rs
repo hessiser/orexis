@@ -41,6 +41,7 @@ pub struct RelicPresetPlan {
     pub plan_uid: u32,
     pub relic_uids: Vec<u32>,
     pub plan_name: String,
+    pub plan_score: String
 }
 
 static LOADOUTS: OnceLock<RwLock<Vec<CharacterLoadout>>> = OnceLock::new();
@@ -499,7 +500,7 @@ fn get_relic_plan_network_source() -> Result<RelicPresetPlanNetworkSource> {
     Ok(network_source)
 }
 
-fn calculate_relic_set_score(avatar_id: u32, relic_uids: Vec<u32>) -> Result<RPG_Client_RelicSmartSuit_RankType> {
+fn calculate_relic_set_score(avatar_id: u32, relic_uids: &Vec<u32>) -> Result<RPG_Client_RelicSmartSuit_RankType> {
     unsafe {
         let module_manager = RPG_Client_GlobalVars::s_ModuleManager()?;
         let avatar_module = module_manager.AvatarModule()?;
@@ -510,7 +511,7 @@ fn calculate_relic_set_score(avatar_id: u32, relic_uids: Vec<u32>) -> Result<RPG
         let mut relics_to_equip: Vec<RPG_Client_RelicItemData> = Vec::new();
         for uid in relic_uids {
             relics_to_equip.push(
-                inventory_module.get_relic_data_by_uid(uid)?
+                inventory_module.get_relic_data_by_uid(*uid)?
             );
         }
 
@@ -530,7 +531,7 @@ fn add_relic_plan(avatar_id: u32, relic_uids: Vec<u32>) -> Result<()> {
 
         let network_source = get_relic_plan_network_source()?;
 
-        let relic_set_score = calculate_relic_set_score(avatar_id, relic_uids.clone())?;
+        let relic_set_score = calculate_relic_set_score(avatar_id, &relic_uids)?;
         let relic_uids = create_list(System_UInt32::ffi_name(), relic_uids)?;
 
         unsafe {
@@ -555,7 +556,7 @@ fn update_relic_plan(avatar_id: u32, relic_uids: Vec<u32>, plan_uid: u32, plan_n
 
         let network_source = get_relic_plan_network_source()?;
 
-        let relic_set_score = calculate_relic_set_score(avatar_id, relic_uids.clone())?;
+        let relic_set_score = calculate_relic_set_score(avatar_id, &relic_uids)?;
         let relic_uids = create_list(System_UInt32::ffi_name(), relic_uids)?;
 
         unsafe {
@@ -674,10 +675,12 @@ fn get_relic_plans(avatar_id: u32) -> Result<Vec<RelicPresetPlan>> {
                         .get_UniqueID()
                         .context("Failed to get plan UID from RelicPresetPlanData")?;
 
+                    let plan_score = calculate_relic_set_score(avatar_id, &relic_uids)?;
                     plans.push(RelicPresetPlan {
                         plan_uid,
                         relic_uids,
                         plan_name: name,
+                        plan_score: plan_score.to_string(),
                     });
                 }
             } else {
