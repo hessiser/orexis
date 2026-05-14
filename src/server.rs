@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use il2cpp_runtime::{Il2CppObject, get_cached_class};
-use il2cpp_runtime::api::{il2cpp_class_get_fields, il2cpp_domain_get, il2cpp_field_get_type, il2cpp_thread_attach};
+use il2cpp_runtime::api::{il2cpp_class_get_fields, il2cpp_domain_get, il2cpp_field_get_type, il2cpp_thread_attach, il2cpp_type_get_name};
 use il2cpp_runtime::types::{Il2CppArray, Il2CppString, List, System_RuntimeType, System_Type, System_UInt32};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -138,6 +138,14 @@ enum OutgoingMessage {
     LoadoutsUpdated { count: usize },
     #[serde(rename = "error")]
     Error { message: String },
+    #[serde(rename = "relic_plans")]
+    RelicPlans { plans: Vec<RelicPresetPlan> },
+    #[serde(rename = "relic_plan_added")]
+    RelicPlanAdded { message: String },
+    #[serde(rename = "relic_plan_updated")]
+    RelicPlanUpdated { message: String },
+    #[serde(rename = "relic_plan_deleted")]
+    RelicPlanDeleted { message: String },
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -246,6 +254,71 @@ async fn handle_connection(stream: tokio::net::TcpStream) -> Result<()> {
                                         handle_apply_loadout(item)
                                     } else {
                                         OutgoingMessage::Error { message: "Missing loadout".to_string() }
+                                    }
+                                }
+                                "get_relic_plans" => {
+                                    let avatar = data.as_ref()
+                                        .and_then(|d| d.get("avatar_id"))
+                                        .and_then(|v| parse_u32_from_value(v));
+                                    if let Some(avatar_id) = avatar {
+                                        match get_relic_plans(avatar_id) {
+                                            Ok(plans) => OutgoingMessage::RelicPlans { plans },
+                                            Err(e) => OutgoingMessage::Error { message: format!("Failed to get relic plans: {e}") },
+                                        }
+                                    } else {
+                                        OutgoingMessage::Error { message: "Missing avatar_id for get_relic_plans".to_string() }
+                                    }
+                                }
+                                "add_relic_plan" => {
+                                    let avatar = data.as_ref()
+                                        .and_then(|d| d.get("avatar_id"))
+                                        .and_then(|v| parse_u32_from_value(v));
+                                    let relic_uids = data.as_ref()
+                                        .and_then(|d| d.get("relic_uids"))
+                                        .and_then(|v| v.as_array().map(|arr| arr.iter().filter_map(|x| parse_u32_from_value(x)).collect::<Vec<u32>>()));
+                                    if let (Some(avatar_id), Some(relics)) = (avatar, relic_uids) {
+                                        match add_relic_plan(avatar_id, relics) {
+                                            Ok(()) => OutgoingMessage::RelicPlanAdded { message: "Plan added".to_string() },
+                                            Err(e) => OutgoingMessage::Error { message: format!("Failed to add relic plan: {e}") },
+                                        }
+                                    } else {
+                                        OutgoingMessage::Error { message: "Missing avatar_id or relic_uids for add_relic_plan".to_string() }
+                                    }
+                                }
+                                "update_relic_plan" => {
+                                    let avatar = data.as_ref()
+                                        .and_then(|d| d.get("avatar_id"))
+                                        .and_then(|v| parse_u32_from_value(v));
+                                    let plan_uid = data.as_ref()
+                                        .and_then(|d| d.get("plan_uid"))
+                                        .and_then(|v| parse_u32_from_value(v));
+                                    let relic_uids = data.as_ref()
+                                        .and_then(|d| d.get("relic_uids"))
+                                        .and_then(|v| v.as_array().map(|arr| arr.iter().filter_map(|x| parse_u32_from_value(x)).collect::<Vec<u32>>()));
+                                    let plan_name = data.as_ref().and_then(|d| d.get("plan_name")).and_then(|v| v.as_str().map(|s| s.to_string()));
+                                    if let (Some(avatar_id), Some(plan_uid), Some(relics)) = (avatar, plan_uid, relic_uids) {
+                                        match update_relic_plan(avatar_id, relics, plan_uid, plan_name) {
+                                            Ok(()) => OutgoingMessage::RelicPlanUpdated { message: "Plan updated".to_string() },
+                                            Err(e) => OutgoingMessage::Error { message: format!("Failed to update relic plan: {e}") },
+                                        }
+                                    } else {
+                                        OutgoingMessage::Error { message: "Missing avatar_id, plan_uid, or relic_uids for update_relic_plan".to_string() }
+                                    }
+                                }
+                                "delete_relic_plan" => {
+                                    let avatar = data.as_ref()
+                                        .and_then(|d| d.get("avatar_id"))
+                                        .and_then(|v| parse_u32_from_value(v));
+                                    let plan_uid = data.as_ref()
+                                        .and_then(|d| d.get("plan_uid"))
+                                        .and_then(|v| parse_u32_from_value(v));
+                                    if let (Some(avatar_id), Some(plan_uid)) = (avatar, plan_uid) {
+                                        match delete_relic_plan(avatar_id, plan_uid) {
+                                            Ok(()) => OutgoingMessage::RelicPlanDeleted { message: "Plan deleted".to_string() },
+                                            Err(e) => OutgoingMessage::Error { message: format!("Failed to delete relic plan: {e}") },
+                                        }
+                                    } else {
+                                        OutgoingMessage::Error { message: "Missing avatar_id or plan_uid for delete_relic_plan".to_string() }
                                     }
                                 }
                                 _ => OutgoingMessage::Error { message: format!("Unsupported message type: {msg_type}") },
@@ -486,7 +559,7 @@ fn get_relic_plan_network_source() -> Result<RelicPresetPlanNetworkSource> {
         }
         if field.name() == "_NetworkService" {
             network_source_type = Some(il2cpp_field_get_type(field).name());
-
+            break;
         }
     }
 
@@ -525,7 +598,7 @@ fn calculate_relic_set_score(avatar_id: u32, relic_uids: &Vec<u32>) -> Result<RP
 }
 
 fn add_relic_plan(avatar_id: u32, relic_uids: Vec<u32>) -> Result<()> {
-    thread::spawn(move || -> Result<()> {
+    let join_res = thread::spawn(move || -> Result<()> {
         let domain = il2cpp_domain_get();
         il2cpp_thread_attach(domain);
 
@@ -540,10 +613,23 @@ fn add_relic_plan(avatar_id: u32, relic_uids: Vec<u32>) -> Result<()> {
         };
 
         Ok(())
-    }).join().unwrap_or_else(|e| {
-        log::error!("Thread panicked: {:?}", e);
-        Err(anyhow::anyhow!("Thread panicked"))
-    })?;
+    }).join();
+    let inner = match join_res {
+        Ok(inner) => inner,
+        Err(panic_payload) => {
+            let any = &*panic_payload;
+            let panic_msg = if let Some(s) = any.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = any.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                format!("Non-string panic payload: {:?}", any)
+            };
+            log::error!("Thread panicked: {}", panic_msg);
+            return Err(anyhow::anyhow!("Thread panicked: {}", panic_msg));
+        }
+    };
+    inner?;
     Ok(())
 }
 
@@ -571,7 +657,16 @@ fn update_relic_plan(avatar_id: u32, relic_uids: Vec<u32>, plan_uid: u32, plan_n
         Ok(())
     }).join().unwrap_or_else(|e| {
         log::error!("Thread panicked: {:?}", e);
-        Err(anyhow::anyhow!("Thread panicked"))
+        let any = &*e;
+        let panic_msg = if let Some(s) = any.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = any.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            format!("Non-string panic payload: {:?}", any)
+        };
+        log::error!("Thread panicked: {}", panic_msg);
+        Err(anyhow::anyhow!("Thread panicked: {}", panic_msg))
     })?;
     Ok(())
 }
@@ -585,14 +680,22 @@ fn delete_relic_plan(avatar_id: u32, plan_uid: u32) -> Result<()> {
         unsafe { network_source.delete_plan(avatar_id, plan_uid)? };
         Ok(())
     }).join().unwrap_or_else(|e| {
-        log::error!("Thread panicked: {:?}", e);
-        Err(anyhow::anyhow!("Thread panicked"))
+        let any = &*e;
+        let panic_msg = if let Some(s) = any.downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = any.downcast_ref::<String>() {
+            s.clone()
+        } else {
+            format!("Non-string panic payload: {:?}", any)
+        };
+        log::error!("Thread panicked: {}", panic_msg);
+        Err(anyhow::anyhow!("Thread panicked: {}", panic_msg))
     })?;
     Ok(())
 }
 
 fn get_relic_plans(avatar_id: u32) -> Result<Vec<RelicPresetPlan>> {
-    thread::spawn(move || -> Result<Vec<RelicPresetPlan>> {
+    let join_res = thread::spawn(move || -> Result<Vec<RelicPresetPlan>> {
         unsafe {
             let domain = il2cpp_domain_get();
             il2cpp_thread_attach(domain);
@@ -606,7 +709,7 @@ fn get_relic_plans(avatar_id: u32) -> Result<Vec<RelicPresetPlan>> {
             const POLL_INTERVAL_MS: u64 = 100;
 
             for attempt in 0..MAX_RETRIES {
-                let state = *promise.get_CurState()?;
+                let state = promise.get_CurState()?;
 
                 match state {
                     RPG_Client_Promises_PromiseState::Resolved => {
@@ -655,11 +758,35 @@ fn get_relic_plans(avatar_id: u32) -> Result<Vec<RelicPresetPlan>> {
                 }
 
                 for value in (*dict_ptr).get_values().iter() {
+                    let plan_uid = match value.get_UniqueID() {
+                        Ok(uid) => uid,
+                        Err(il2cpp_runtime::errors::Il2CppError::NullPointerDereference) => {
+                            continue;
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "Failed to get plan UID from RelicPresetPlanData: {:?}",
+                                e
+                            ));
+                        }
+                    };
+
+                    let relic_uids = match value.get_RelicUniqueIDs() {
+                        Ok(ids) => ids.to_vec::<u32>(),
+                        Err(il2cpp_runtime::errors::Il2CppError::NullPointerDereference) => {
+                            continue;
+                        }
+                        Err(e) => {
+                            return Err(anyhow::anyhow!(
+                                "Failed to get relic UID array from RelicPresetPlanData: {:?}",
+                                e
+                            ));
+                        }
+                    };
+
                     let name = match value.get_Name() {
                         Ok(n) => n.to_string(),
-                        Err(il2cpp_runtime::errors::Il2CppError::NullPointerDereference) => {
-                            String::new()
-                        }
+                        Err(il2cpp_runtime::errors::Il2CppError::NullPointerDereference) => String::new(),
                         Err(e) => {
                             return Err(anyhow::anyhow!(
                                 "Failed to get Name from RelicPresetPlanData: {:?}",
@@ -667,13 +794,6 @@ fn get_relic_plans(avatar_id: u32) -> Result<Vec<RelicPresetPlan>> {
                             ));
                         }
                     };
-                    let relic_uids = value
-                        .get_RelicUniqueIDs()
-                        .context("Failed to get relic UID array from RelicPresetPlanData")?
-                        .to_vec::<u32>();
-                    let plan_uid = value
-                        .get_UniqueID()
-                        .context("Failed to get plan UID from RelicPresetPlanData")?;
 
                     let plan_score = calculate_relic_set_score(avatar_id, &relic_uids)?;
                     plans.push(RelicPresetPlan {
@@ -693,11 +813,23 @@ fn get_relic_plans(avatar_id: u32) -> Result<Vec<RelicPresetPlan>> {
             Ok(plans)
         }
     })
-    .join()
-    .unwrap_or_else(|e| {
-        log::error!("Thread panicked: {:?}", e);
-        Err(anyhow::anyhow!("Thread panicked"))
-    })
+    .join();
+    let inner = match join_res {
+        Ok(inner) => inner,
+        Err(panic_payload) => {
+            let any = &*panic_payload;
+            let panic_msg = if let Some(s) = any.downcast_ref::<&str>() {
+                s.to_string()
+            } else if let Some(s) = any.downcast_ref::<String>() {
+                s.clone()
+            } else {
+                format!("Non-string panic payload: {:?}", any)
+            };
+            log::error!("Thread panicked: {}", panic_msg);
+            return Err(anyhow::anyhow!("Thread panicked: {}", panic_msg));
+        }
+    };
+    inner
 }
 
 pub fn send_live_relic_update(relics: Vec<ReliquaryRelic>) {

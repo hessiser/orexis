@@ -294,7 +294,7 @@ impl RPG_Client_RelicPresetModel {
 pub struct RPG_Client_Promises_Promise;
 impl RPG_Client_Promises_Promise {
 	#[il2cpp_method(name = "get_CurState", args = [])]
-	pub fn get_CurState(&self) -> RPG_Client_Promises_PromiseState__Boxed {}
+	pub fn get_CurState(&self) -> RPG_Client_Promises_PromiseState {}
 }
 
 #[il2cpp_enum_type(i32)]
@@ -383,7 +383,7 @@ impl RPG_Client_GlobalVars {
 #[il2cpp_ref_type("*")]
 pub struct DIContainer;
 impl DIContainer {
-    #[il2cpp_method(name = "*", args = ["System.Type", "string"])]
+    #[il2cpp_method(name = "*", args = ["System.Type", "string"], ret_type = "object")]
     pub fn resolve(&self, ty: System_Type, name: Il2CppString) -> *const c_void {}
 }
 
